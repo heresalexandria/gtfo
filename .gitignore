@@ -1,0 +1,5 @@
+node_modules/
+exports/
+logs/
+.DS_Store
+use-heresalexandria.sh
