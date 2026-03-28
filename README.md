@@ -1,6 +1,10 @@
 # Get Those Files Out - Sora exporter
 
-Export your draft videos from [Sora](https://sora.chatgpt.com) before the service sunsets.
+*Based on work in the [sora-creator-tools](https://github.com/fancyson-ai/sora-creator-tools/) extension by the amazing [thecosmicskye](https://github.com/thecosmicskye), [cameoed](https://github.com/cameoed), [dblunk88](https://github.com/dblunk88), [fancyson-ai](https://github.com/fancyson-ai), [chrisbelson](https://github.com/chrisbelson), [lgcarrier](https://github.com/lgcarrier), [travisfischer](https://github.com/travisfischer), and [possum-kingdom](https://github.com/possum-kingdom) 🙌*
+
+---
+
+Export your draft videos from [Sora](https://sora.chatgpt.com) before the service sunsets with configurable rate limiting, pause/resume, and deduplication handling.
 
 ![Demo](./demo.jpg)
 
