@@ -40,6 +40,7 @@ let totalEntries  = 0;
 let currentId     = '';
 let currentStatus = 'starting';
 let startTime     = Date.now();
+let downloadedIds = new Set();
 
 /* ── Logging ────────────────────────────────────────────────────── */
 function log(msg) {
@@ -62,11 +63,30 @@ function loadUrls() {
     });
 }
 
+function loadDownloadedIds() {
+  const ids = new Set();
+  // Check local files
+  if (fs.existsSync(DEST_DIR)) {
+    for (const f of fs.readdirSync(DEST_DIR)) {
+      const m = f.match(/^sora-draft-(.+)\.mp4$/);
+      if (m) {
+        const stat = fs.statSync(path.join(DEST_DIR, f));
+        if (stat.size > MIN_FILE_KB * 1024) ids.add(m[1]);
+      }
+    }
+  }
+  // Check download log for previously successful downloads
+  if (fs.existsSync(LOG_FILE)) {
+    for (const line of fs.readFileSync(LOG_FILE, 'utf-8').split('\n')) {
+      const m = line.match(/\] OK (gen_\S+)/);
+      if (m) ids.add(m[1]);
+    }
+  }
+  return ids;
+}
+
 function alreadyDownloaded(id) {
-  const dest = path.join(DEST_DIR, `sora-draft-${id}.mp4`);
-  if (!fs.existsSync(dest)) return false;
-  const stat = fs.statSync(dest);
-  return stat.size > MIN_FILE_KB * 1024;
+  return downloadedIds.has(id);
 }
 
 /* ── Download a single file ─────────────────────────────────────── */
@@ -248,10 +268,12 @@ async function rateDelay() {
   fs.mkdirSync(DEST_DIR, { recursive: true });
   fs.mkdirSync(LOGS_DIR, { recursive: true });
 
+  downloadedIds = loadDownloadedIds();
   const entries = loadUrls();
   totalEntries = entries.length;
 
   log(`--- Session started: ${totalEntries} entries in ${URLS_FILE} ---`);
+  if (downloadedIds.size > 0) log(`Skipping ${downloadedIds.size} previously downloaded drafts`);
   log(`Destination: ${DEST_DIR}`);
   log(`Initial rate: ${Math.round(60 / delaySeconds)}/min (${delaySeconds}s delay)`);
 
