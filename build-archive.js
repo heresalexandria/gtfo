@@ -215,6 +215,28 @@ a { color: inherit; text-decoration: none; }
 .about .counts b { color: var(--fg); }
 .about .archived { color: var(--muted); font-size: 12px; margin-top: 8px; }
 
+.controls {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  max-width: 1200px; margin: 0 auto; padding: 16px 24px 0;
+}
+.controls input[type="search"] {
+  flex: 1; min-width: 200px;
+  background: var(--card); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px; font: inherit;
+}
+.controls input[type="search"]:focus { outline: none; border-color: #555; }
+.controls select {
+  background: var(--card); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px; font: inherit; cursor: pointer;
+}
+.controls .count { color: var(--muted); font-size: 13px; }
+.no-results {
+  max-width: 1200px; margin: 40px auto; padding: 24px;
+  text-align: center; color: var(--muted);
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -293,16 +315,31 @@ function profilePageHtml(profile, processed) {
   const cards = processed.map(({ post, thumbRel, cast }) => {
     const att = post.attachments?.[0];
     const duration = att?.duration_s ? `${att.duration_s.toFixed(1)}s` : '';
-    const castTeaser = (cast && cast.length)
-      ? `<div class="cast-teaser" title="${escapeHtml(cast.map(c => '@' + c.username).join(', '))}">
-           <span class="avatars">${cast.slice(0, 3).map(c =>
+    const castList = cast || [];
+    const castTeaser = castList.length
+      ? `<div class="cast-teaser" title="${escapeHtml(castList.map(c => '@' + c.username).join(', '))}">
+           <span class="avatars">${castList.slice(0, 3).map(c =>
              `<img loading="lazy" src="${escapeHtml(c.avatarRel || c.profile_picture_url || '')}" alt="" onerror="this.style.display='none'">`
            ).join('')}</span>
-           <span>cast ${cast.length}</span>
+           <span>cast ${castList.length}</span>
          </div>`
       : '';
+
+    // Haystack for search: caption + @usernames + cast display names.
+    const searchBits = [
+      post.text || '',
+      ...castList.map(c => '@' + (c.username || '')),
+      ...castList.map(c => c.display_name || ''),
+    ].filter(Boolean).join(' ').toLowerCase();
+
     return `
-      <a class="card" href="posts/${encodeURIComponent(post.id)}/index.html">
+      <a class="card"
+         href="posts/${encodeURIComponent(post.id)}/index.html"
+         data-search="${escapeHtml(searchBits)}"
+         data-posted="${post.posted_at || 0}"
+         data-likes="${post.like_count || 0}"
+         data-comments="${post.reply_count || 0}"
+         data-views="${post.view_count || 0}">
         <div class="thumb">
           ${thumbRel ? `<img loading="lazy" src="${escapeHtml(thumbRel)}" alt="">` : ''}
           ${duration ? `<span class="dur">${escapeHtml(duration)}</span>` : ''}
@@ -342,9 +379,72 @@ function profilePageHtml(profile, processed) {
     <div class="archived">Archived ${escapeHtml(new Date().toLocaleString())} · ${processed.length} posts</div>
   </div>
 </header>
+<div class="controls">
+  <input type="search" id="q" placeholder="Search description or @cast...">
+  <select id="sort">
+    <option value="newest">Newest first</option>
+    <option value="oldest">Oldest first</option>
+    <option value="likes">Most liked</option>
+    <option value="comments">Most commented</option>
+    <option value="views">Most viewed</option>
+  </select>
+  <span class="count" id="count"></span>
+</div>
 <main class="grid">
 ${cards}
 </main>
+<div class="no-results" id="no-results" hidden>No posts match your search.</div>
+<script>
+(() => {
+  const q = document.getElementById('q');
+  const sort = document.getElementById('sort');
+  const count = document.getElementById('count');
+  const grid = document.querySelector('.grid');
+  const noResults = document.getElementById('no-results');
+  const cards = Array.from(grid.querySelectorAll('.card'));
+  const total = cards.length;
+
+  function apply() {
+    const query = q.value.trim().toLowerCase();
+    const mode = sort.value;
+    let visible = 0;
+    for (const c of cards) {
+      const match = !query || c.dataset.search.includes(query);
+      c.style.display = match ? '' : 'none';
+      if (match) visible++;
+    }
+    const sortKeys = { likes: 'likes', comments: 'comments', views: 'views' };
+    const sortable = cards.slice().sort((a, b) => {
+      if (mode === 'oldest') return (+a.dataset.posted) - (+b.dataset.posted);
+      if (mode === 'newest') return (+b.dataset.posted) - (+a.dataset.posted);
+      const k = sortKeys[mode];
+      return (+b.dataset[k]) - (+a.dataset[k]);
+    });
+    for (const c of sortable) grid.appendChild(c);
+    count.textContent = query ? visible + ' of ' + total : total + ' posts';
+    noResults.hidden = visible > 0;
+  }
+
+  q.addEventListener('input', apply);
+  sort.addEventListener('change', apply);
+
+  // Restore state from URL hash (e.g. #q=sama&sort=likes)
+  const params = new URLSearchParams(location.hash.slice(1));
+  if (params.has('q')) q.value = params.get('q');
+  if (params.has('sort')) sort.value = params.get('sort');
+  apply();
+
+  // Persist to hash so links/share keep filter
+  function syncHash() {
+    const p = new URLSearchParams();
+    if (q.value) p.set('q', q.value);
+    if (sort.value && sort.value !== 'newest') p.set('sort', sort.value);
+    history.replaceState(null, '', p.toString() ? '#' + p.toString() : location.pathname);
+  }
+  q.addEventListener('input', syncHash);
+  sort.addEventListener('change', syncHash);
+})();
+</script>
 </body>
 </html>`;
 }
