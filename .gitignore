@@ -1,6 +1,8 @@
 node_modules/
 exports/
 logs/
+archive/
+.claude/
 .DS_Store
 use-heresalexandria.sh
 AGENT.md
