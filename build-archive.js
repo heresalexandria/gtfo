@@ -404,6 +404,60 @@ a { color: inherit; text-decoration: none; }
 .draft-page .draft-details .muted { color: var(--muted); }
 .draft-page .draft-source-link { display: inline-block; margin-top: 8px; color: var(--muted); font-size: 11px; text-decoration: underline; text-decoration-color: var(--border); word-break: break-all; }
 
+/* Kind badge on card thumbs (violations, errors, variants, etc.) */
+.kind-badge {
+  position: absolute; top: 8px; left: 8px;
+  font-size: 10px; letter-spacing: .3px;
+  padding: 3px 8px; border-radius: 4px;
+  background: rgba(0,0,0,.75); color: #fff;
+  backdrop-filter: blur(2px);
+  max-width: calc(100% - 16px);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.kind-violation { background: rgba(180, 40, 50, .92); }
+.kind-error     { background: rgba(180, 110, 40, .92); }
+.kind-paragen,
+.kind-storyboard { background: rgba(60, 100, 180, .92); }
+.kind-other      { background: rgba(110, 110, 120, .92); }
+/* De-emphasize cards for failed/violation drafts so the user's eye skips them */
+.draft-card-kind-violation .thumb,
+.draft-card-kind-error .thumb { background: #1a0f10; }
+.draft-card-kind-violation .caption,
+.draft-card-kind-error .caption { color: var(--muted); font-style: italic; }
+
+/* Detail-page banners for non-downloadable drafts */
+.draft-banner {
+  margin: 0 0 16px 0; padding: 14px 18px; border-radius: 10px;
+  border: 1px solid var(--border);
+  display: flex; gap: 12px; align-items: flex-start;
+}
+.draft-banner .banner-icon { font-size: 20px; flex-shrink: 0; }
+.draft-banner .banner-body { flex: 1; }
+.draft-banner .banner-title { font-size: 14px; font-weight: 600; margin: 0 0 4px 0; }
+.draft-banner .banner-text { font-size: 13px; color: var(--muted); margin: 0; white-space: pre-wrap; }
+.draft-banner.violation { background: rgba(180, 40, 50, .12); border-color: rgba(180, 40, 50, .4); }
+.draft-banner.violation .banner-title { color: #f5a3ab; }
+.draft-banner.error     { background: rgba(180, 110, 40, .12); border-color: rgba(180, 110, 40, .4); }
+.draft-banner.error     .banner-title { color: #f5c892; }
+.draft-banner.info      { background: rgba(60, 100, 180, .10); border-color: rgba(60, 100, 180, .4); }
+.draft-banner.info      .banner-title { color: #a9c3ff; }
+.draft-remix-target {
+  margin-top: 10px; padding: 10px 12px; border-radius: 8px;
+  background: var(--card); border: 1px solid var(--border); font-size: 12px;
+}
+.draft-remix-target .rt-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+.draft-remix-target .rt-caption { margin-top: 4px; color: var(--fg); }
+.draft-children {
+  margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px;
+}
+.draft-children a {
+  font-size: 11px; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  background: var(--card); border: 1px solid var(--border);
+  padding: 4px 10px; border-radius: 6px; color: var(--fg);
+  text-decoration: none;
+}
+.draft-children a:hover { border-color: #555; }
+
 .comments-section { padding: 16px 0; }
 .comments-section h2 { font-size: 16px; margin: 0 0 12px 0; }
 .comments, .replies { list-style: none; padding: 0; margin: 0; }
@@ -429,7 +483,24 @@ function profilePageHtml(profile, postsProcessed, castinsProcessed, draftsProces
   //   i: id, t: created_at unix seconds, p: prompt (capped),
   //   d: duration seconds, h: 1 if local thumbnail exists,
   //   c: [{u: username, n: display_name, a: local-avatar-path-or-empty}]
+  //   k: kind ONLY when != sora_draft (e.g. sora_content_violation / sora_error)
+  //   e: short error/reason string (for failed drafts — shown on card + in tooltip)
+  //   n: number of children (for sora_paragen variant groups / storyboard assets)
   const PROMPT_CAP = 1200;  // cap per-card prompt in the search index
+  function draftKindOf(draft) {
+    if (!draft) return null;
+    if (draft.kind) return draft.kind;
+    // Storyboard-style drafts have no top-level kind but have timeline/assets/preview_asset.
+    if (draft.timeline || draft.assets || draft.preview_asset) return 'storyboard';
+    return null;
+  }
+  function draftReasonOf(draft) {
+    if (!draft) return '';
+    return draft.reason_str
+      || draft.markdown_reason_str
+      || draft.error_reason
+      || '';
+  }
   function compactDraft({ id, timestamp, draft, cast, hasThumb }) {
     const prompt = draft?.prompt || draft?.creation_config?.prompt || '';
     const out = { i: id, t: timestamp || 0 };
@@ -445,6 +516,12 @@ function profilePageHtml(profile, postsProcessed, castinsProcessed, draftsProces
         return entry;
       });
     }
+    const kind = draftKindOf(draft);
+    if (kind && kind !== 'sora_draft') out.k = kind;
+    const reason = draftReasonOf(draft);
+    if (reason) out.e = reason.length > 300 ? reason.slice(0, 300) : reason;
+    const childCount = draft?.drafts?.length || draft?.assets?.length || 0;
+    if (childCount) out.n = childCount;
     return out;
   }
 
@@ -598,6 +675,8 @@ ${postsCards}
     for (const d of arr) {
       let s = (d.i || '').toLowerCase();
       if (d.p) s += ' ' + d.p.toLowerCase();
+      if (d.e) s += ' ' + d.e.toLowerCase();
+      if (d.k) s += ' ' + d.k.toLowerCase();
       if (d.c) for (const c of d.c) {
         if (c.u) s += ' @' + c.u.toLowerCase();
         if (c.n) s += ' ' + c.n.toLowerCase();
@@ -625,9 +704,25 @@ ${postsCards}
   function shortId(id) {
     return (id.startsWith('gen_') ? id.slice(4) : id).slice(0, 8);
   }
+  // Kind → short UI label + CSS class for failed/special drafts.
+  // Unrecognized kinds fall through to the generic 'other' style.
+  const KIND_LABELS = {
+    sora_content_violation: { label: 'Blocked', cls: 'kind-violation', icon: '⛔' },
+    sora_error:             { label: 'Error',   cls: 'kind-error',     icon: '⚠' },
+    sora_paragen:           { label: 'Variants', cls: 'kind-paragen',  icon: '▦' },
+    storyboard:             { label: 'Storyboard', cls: 'kind-storyboard', icon: '▦' },
+  };
+  function kindInfo(k) {
+    if (!k) return null;
+    return KIND_LABELS[k] || { label: k.replace(/^sora_/, ''), cls: 'kind-other', icon: '?' };
+  }
+
   function draftCardHtml(d) {
     const prompt = d.p || '';
-    const displayPrompt = prompt ? (prompt.length > 180 ? prompt.slice(0, 180) : prompt) : '(no prompt captured)';
+    const info = kindInfo(d.k);
+    // Caption preference: prompt → error/reason → generic placeholder.
+    const captionSrc = prompt || d.e || '(no prompt captured)';
+    const displayCaption = captionSrc.length > 180 ? captionSrc.slice(0, 180) : captionSrc;
     const dur = d.d ? d.d.toFixed(1) + 's' : '';
     const cast = d.c || [];
     const castTeaser = cast.length
@@ -636,13 +731,20 @@ ${postsCards}
         + cast.slice(0, 3).map(c => '<img loading="lazy" src="' + esc(c.a || '') + '" alt="" onerror="this.style.display=\\'none\\'">').join('')
         + '</span><span>cast ' + cast.length + '</span></div>'
       : '';
-    return '<a class="card draft-card" href="drafts/' + encodeURIComponent(d.i) + '/index.html">'
+    const kindBadge = info
+      ? '<span class="kind-badge ' + info.cls + '" title="' + esc(d.e || info.label) + '">'
+        + info.icon + ' ' + esc(info.label) + (d.n ? ' (' + d.n + ')' : '')
+        + '</span>'
+      : '';
+    const cardCls = 'card draft-card' + (info ? ' draft-card-' + info.cls : '');
+    return '<a class="' + cardCls + '" href="drafts/' + encodeURIComponent(d.i) + '/index.html">'
       +   '<div class="thumb">'
       +     (d.h ? '<img loading="lazy" src="drafts/' + encodeURIComponent(d.i) + '/thumbnail.jpg" alt="" onerror="this.style.display=\\'none\\'">' : '')
+      +     kindBadge
       +     (dur ? '<span class="dur">' + esc(dur) + '</span>' : '')
       +   '</div>'
       +   '<div class="meta">'
-      +     '<div class="caption">' + esc(displayPrompt) + '</div>'
+      +     '<div class="caption">' + esc(displayCaption) + '</div>'
       +     '<div class="draft-footer"><span class="draft-date">' + esc(fmtDraftDate(d.t) || '—') + '</span><span class="draft-id" title="' + esc(d.i) + '">#' + esc(shortId(d.i)) + '</span></div>'
       +     castTeaser
       +   '</div>'
@@ -846,6 +948,12 @@ function draftPageHtml(id, timestamp, draft, ownerProfile, cast, hasVideo, hasTh
   const storyboardId = draft?.creation_config?.storyboard_id || draft?.storyboard_id;
   const remixTarget  = draft?.creation_config?.remix_target_post;
   const taskId       = draft?.task_id;
+  // Classify the draft: normal, moderation violation, generation error,
+  // variant group (sora_paragen), or storyboard (undefined kind + timeline).
+  const kind = draft?.kind
+    || (draft?.timeline || draft?.assets || draft?.preview_asset ? 'storyboard' : null);
+  const reason = draft?.reason_str || draft?.markdown_reason_str || '';
+  const errorReason = draft?.error_reason || '';
 
   const badges = [
     duration ? `${duration.toFixed(1)}s` : null,
@@ -879,13 +987,88 @@ function draftPageHtml(id, timestamp, draft, ownerProfile, cast, hasVideo, hasTh
        </section>`
     : '';
 
+  // Build a banner for drafts that aren't playable (moderation / error /
+  // variants / storyboards). Each case gets a clear explanation AND any raw
+  // reason/error text Sora returned, so the user knows *why* there's no video.
+  let bannerHtml = '';
+  if (kind === 'sora_content_violation') {
+    bannerHtml = `
+      <div class="draft-banner violation">
+        <span class="banner-icon">⛔</span>
+        <div class="banner-body">
+          <div class="banner-title">Blocked by Sora moderation</div>
+          <p class="banner-text">${escapeHtml(reason || 'Sora declined to generate this draft. No video was produced.')}</p>
+          ${draft?.draft_reviewed === false ? `<p class="banner-text" style="margin-top:6px;font-size:11px;">draft_reviewed: false — this block may be appealable in Sora.</p>` : ''}
+        </div>
+      </div>`;
+  } else if (kind === 'sora_error') {
+    bannerHtml = `
+      <div class="draft-banner error">
+        <span class="banner-icon">⚠</span>
+        <div class="banner-body">
+          <div class="banner-title">Generation failed</div>
+          <p class="banner-text">Sora's generation task errored out and no video was produced.${errorReason ? ` Error reason: <code>${escapeHtml(errorReason)}</code>.` : ''}</p>
+        </div>
+      </div>`;
+  } else if (kind === 'sora_paragen') {
+    const childCount = draft?.drafts?.length || 0;
+    const children = draft?.drafts || [];
+    bannerHtml = `
+      <div class="draft-banner info">
+        <span class="banner-icon">▦</span>
+        <div class="banner-body">
+          <div class="banner-title">Variant group (${childCount} variants)</div>
+          <p class="banner-text">This draft is a container for ${childCount} generation variant${childCount === 1 ? '' : 's'}. Each variant is its own draft; click through to watch the individual clips.</p>
+          ${children.length ? `<div class="draft-children">${children.map(c => `<a href="../${escapeHtml(c.id || '')}/index.html" title="${escapeHtml((c.prompt || '').slice(0, 160))}">#${escapeHtml((c.id || '').slice(4, 12))}</a>`).join('')}</div>` : ''}
+        </div>
+      </div>`;
+  } else if (kind === 'storyboard') {
+    const assetIds = draft?.assets || [];
+    bannerHtml = `
+      <div class="draft-banner info">
+        <span class="banner-icon">▦</span>
+        <div class="banner-body">
+          <div class="banner-title">Storyboard (${assetIds.length} clip${assetIds.length === 1 ? '' : 's'})</div>
+          <p class="banner-text">This is a multi-clip storyboard draft assembled from other generations. The clips below link to their individual drafts.</p>
+          ${assetIds.length ? `<div class="draft-children">${assetIds.map(aid => `<a href="../${escapeHtml(aid)}/index.html">#${escapeHtml(aid.slice(4, 12))}</a>`).join('')}</div>` : ''}
+        </div>
+      </div>`;
+  } else if (!hasVideo) {
+    // Sora_draft but we just haven't downloaded the mp4 yet.
+    bannerHtml = `
+      <div class="draft-banner info">
+        <span class="banner-icon">⬇</span>
+        <div class="banner-body">
+          <div class="banner-title">Video not downloaded locally</div>
+          <p class="banner-text">This draft has metadata but no local mp4. Run <code>node download-drafts.js --username ${escapeHtml(ownerProfile.username)}</code> to fetch it${taskId ? ` (task ${escapeHtml(taskId)})` : ''}.</p>
+        </div>
+      </div>`;
+  }
+
+  // Remix context — valuable for understanding violated/failed drafts
+  // ("this is what I was trying to remix"). Shown for any draft that remixed
+  // an existing post, not just failures. The post object only carries a
+  // `shared_by` user_id, not a handle, so we use text + permalink instead.
+  const rt = remixTarget?.post;
+  const rtText = (rt?.text || '').trim();
+  const remixBlock = rt
+    ? `<div class="draft-remix-target">
+         <div class="rt-label">Remix target${rt.permalink ? ` · <a href="${escapeHtml(rt.permalink)}" target="_blank" rel="noopener">view on Sora ↗</a>` : ''}</div>
+         ${rtText ? `<div class="rt-caption">${escapeHtml(rtText.slice(0, 280))}${rtText.length > 280 ? '…' : ''}</div>` : ''}
+       </div>`
+    : '';
+
   const videoBlock = hasVideo
     ? `<div class="video-wrap">
          <video controls ${hasThumb ? `poster="thumbnail.jpg"` : ''} playsinline>
            <source src="video.mp4" type="video/mp4">
          </video>
        </div>`
-    : `<div class="no-video">Video not downloaded locally.${taskId ? ` Task: ${escapeHtml(taskId)}` : ''}</div>`;
+    : bannerHtml || `<div class="no-video">Video unavailable.</div>`;
+
+  // If there IS a video, banner appears AFTER the video (e.g. for odd
+  // informational cases) — but typically hasVideo means no banner needed.
+  const bannerAfterVideo = hasVideo && bannerHtml ? bannerHtml : '';
 
   const promptBlock = prompt
     ? `<h1 class="caption draft-prompt">${escapeHtml(prompt)}</h1>`
@@ -907,11 +1090,15 @@ function draftPageHtml(id, timestamp, draft, ownerProfile, cast, hasVideo, hasTh
 <nav><a href="../../index.html#tab=drafts">← @${escapeHtml(ownerProfile.username)} / drafts</a></nav>
 <article>
   ${videoBlock}
+  ${bannerAfterVideo}
   <div class="post-meta">
     ${promptBlock}
     ${badges.length ? `<div class="draft-badges">${badges.map(b => `<span class="badge">${escapeHtml(b)}</span>`).join('')}</div>` : ''}
+    ${remixBlock}
     <div class="draft-details">
       <div><span class="muted">ID:</span> <code>${escapeHtml(id)}</code></div>
+      ${kind && kind !== 'sora_draft' ? `<div><span class="muted">Kind:</span> <code>${escapeHtml(kind)}</code></div>` : ''}
+      ${taskId ? `<div><span class="muted">Task:</span> <code>${escapeHtml(taskId)}</code></div>` : ''}
       ${dateStr ? `<div><span class="muted">Created:</span> ${escapeHtml(dateStr)}${fullDate ? ` <span class="muted" title="${escapeHtml(fullDate)}">(${escapeHtml(fullDate)})</span>` : ''}</div>` : ''}
       ${rawLink}
     </div>
