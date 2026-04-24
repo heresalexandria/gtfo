@@ -11,11 +11,11 @@
  *
  * Usage:
  *   1. Quit Chrome completely.
- *   2. node capture-drafts.js
+ *   2. node capture-drafts.js --username <your-sora-username>
  *   3. Log in to Sora in the Chrome window that opens.
  *   4. Press Enter in the terminal when you can see your drafts.
  *   5. The script scrolls and captures. When it stalls, it asks to continue.
- *   6. Run node download-drafts.js in another terminal to download.
+ *   6. Run node download-drafts.js --username <your-sora-username> to download.
  */
 
 const { chromium } = require('playwright');
@@ -23,10 +23,23 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 
+/* ── CLI args ───────────────────────────────────────────────────── */
+const args = process.argv.slice(2);
+function argVal(name, fallback) {
+  const i = args.indexOf(name);
+  return i >= 0 && i + 1 < args.length ? args[i + 1] : fallback;
+}
+const USERNAME = argVal('--username', null);
+if (!USERNAME) {
+  console.error('Missing --username. Usage: node capture-drafts.js --username <your-sora-username>');
+  process.exit(1);
+}
+
 /* ── Configuration ──────────────────────────────────────────────── */
-const DEST_DIR        = process.env.DEST_DIR || path.join(__dirname, 'exports', 'drafts');
-const LOGS_DIR        = process.env.LOGS_DIR || path.join(__dirname, 'logs');
-const URLS_FILE       = path.join(LOGS_DIR, 'drafts.txt');
+const ARCHIVE_ROOT    = argVal('--out', path.join(__dirname, 'archive'));
+const USER_DIR        = path.join(ARCHIVE_ROOT, USERNAME);
+const DRAFTS_DIR      = process.env.DEST_DIR || path.join(USER_DIR, 'drafts');
+const URLS_FILE       = process.env.URLS_FILE || path.join(USER_DIR, 'drafts.txt');
 const SCROLL_PX       = 300;
 const SCROLL_DELAY_MS = 5000;
 const STALE_TIMEOUT_S = 300;     // 5 min before pausing
@@ -78,10 +91,11 @@ function loadKnownIds() {
       if (id) ids.add(id);
     }
   }
-  if (fs.existsSync(DEST_DIR)) {
-    for (const f of fs.readdirSync(DEST_DIR)) {
-      const m = f.match(/^sora-draft-(.+)\.mp4$/);
-      if (m) ids.add(m[1]);
+  // Per-draft subfolder layout: DRAFTS_DIR/<id>/video.mp4
+  if (fs.existsSync(DRAFTS_DIR)) {
+    for (const id of fs.readdirSync(DRAFTS_DIR)) {
+      const video = path.join(DRAFTS_DIR, id, 'video.mp4');
+      if (fs.existsSync(video)) ids.add(id);
     }
   }
   return ids;
@@ -89,8 +103,8 @@ function loadKnownIds() {
 
 /* ── Main ───────────────────────────────────────────────────────── */
 (async () => {
-  fs.mkdirSync(DEST_DIR, { recursive: true });
-  fs.mkdirSync(LOGS_DIR, { recursive: true });
+  fs.mkdirSync(DRAFTS_DIR, { recursive: true });
+  fs.mkdirSync(path.dirname(URLS_FILE), { recursive: true });
 
   const knownIds = loadKnownIds();
   if (knownIds.size > 0) console.log(`Skipping ${knownIds.size} already-captured drafts.\n`);

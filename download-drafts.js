@@ -10,8 +10,8 @@
  *   - Log file for tracking
  *
  * Usage:
- *   node download-drafts.js
- *   node download-drafts.js /path/to/urls.txt
+ *   node download-drafts.js --username <your-sora-username>
+ *   node download-drafts.js --username <user> --urls /path/to/drafts.txt
  */
 
 const fs = require('fs');
@@ -19,11 +19,25 @@ const path = require('path');
 const https = require('https');
 const http = require('http');
 
+/* ── CLI args ───────────────────────────────────────────────────── */
+const args = process.argv.slice(2);
+function argVal(name, fallback) {
+  const i = args.indexOf(name);
+  return i >= 0 && i + 1 < args.length ? args[i + 1] : fallback;
+}
+const USERNAME = argVal('--username', null);
+if (!USERNAME) {
+  console.error('Missing --username. Usage: node download-drafts.js --username <your-sora-username> [--urls <path>]');
+  process.exit(1);
+}
+
 /* ── Configuration ──────────────────────────────────────────────── */
-const LOGS_DIR    = process.env.LOGS_DIR || path.join(__dirname, 'logs');
-const URLS_FILE   = process.argv[2] || path.join(LOGS_DIR, 'drafts.txt');
-const DEST_DIR    = process.env.DEST_DIR || path.join(__dirname, 'exports', 'drafts');
-const LOG_FILE    = path.join(LOGS_DIR, 'download.log');
+const ARCHIVE_ROOT = argVal('--out', path.join(__dirname, 'archive'));
+const USER_DIR     = path.join(ARCHIVE_ROOT, USERNAME);
+const DRAFTS_DIR   = process.env.DEST_DIR || path.join(USER_DIR, 'drafts');
+const URLS_FILE    = argVal('--urls', null) || process.env.URLS_FILE || path.join(USER_DIR, 'drafts.txt');
+const LOGS_DIR     = process.env.LOGS_DIR || path.join(USER_DIR, 'logs');
+const LOG_FILE     = path.join(LOGS_DIR, 'drafts-download.log');
 const MIN_FILE_KB = 50;      // files under 50 KB are suspicious
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 5000;    // ms before retry
@@ -64,22 +78,15 @@ function loadUrls() {
 }
 
 function loadDownloadedIds() {
+  // Only trust the filesystem. Log entries are not gated on DRAFTS_DIR, so trusting
+  // them caused every run after a scripts/dest move to skip already-logged IDs
+  // even though the mp4s lived in the old folder.
   const ids = new Set();
-  // Check local files
-  if (fs.existsSync(DEST_DIR)) {
-    for (const f of fs.readdirSync(DEST_DIR)) {
-      const m = f.match(/^sora-draft-(.+)\.mp4$/);
-      if (m) {
-        const stat = fs.statSync(path.join(DEST_DIR, f));
-        if (stat.size > MIN_FILE_KB * 1024) ids.add(m[1]);
-      }
-    }
-  }
-  // Check download log for previously successful downloads
-  if (fs.existsSync(LOG_FILE)) {
-    for (const line of fs.readFileSync(LOG_FILE, 'utf-8').split('\n')) {
-      const m = line.match(/\] OK (gen_\S+)/);
-      if (m) ids.add(m[1]);
+  if (fs.existsSync(DRAFTS_DIR)) {
+    for (const id of fs.readdirSync(DRAFTS_DIR)) {
+      const video = path.join(DRAFTS_DIR, id, 'video.mp4');
+      if (!fs.existsSync(video)) continue;
+      if (fs.statSync(video).size > MIN_FILE_KB * 1024) ids.add(id);
     }
   }
   return ids;
@@ -114,7 +121,9 @@ function downloadFile(url, dest) {
 }
 
 async function downloadWithRetries(id, url) {
-  const dest = path.join(DEST_DIR, `sora-draft-${id}.mp4`);
+  const destDir = path.join(DRAFTS_DIR, id);
+  fs.mkdirSync(destDir, { recursive: true });
+  const dest = path.join(destDir, 'video.mp4');
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -265,7 +274,7 @@ async function rateDelay() {
 
 /* ── Main ───────────────────────────────────────────────────────── */
 (async () => {
-  fs.mkdirSync(DEST_DIR, { recursive: true });
+  fs.mkdirSync(DRAFTS_DIR, { recursive: true });
   fs.mkdirSync(LOGS_DIR, { recursive: true });
 
   downloadedIds = loadDownloadedIds();
@@ -274,7 +283,7 @@ async function rateDelay() {
 
   log(`--- Session started: ${totalEntries} entries in ${URLS_FILE} ---`);
   if (downloadedIds.size > 0) log(`Skipping ${downloadedIds.size} previously downloaded drafts`);
-  log(`Destination: ${DEST_DIR}`);
+  log(`Destination: ${DRAFTS_DIR}`);
   log(`Initial rate: ${Math.round(60 / delaySeconds)}/min (${delaySeconds}s delay)`);
 
   setupKeyboard();

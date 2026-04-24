@@ -50,14 +50,17 @@ if (!USERNAME) {
   process.exit(1);
 }
 
-const OUT_DIR        = path.join(ROOT, USERNAME);
-const POSTS_META_DIR = path.join(OUT_DIR, '_posts');
-const POSTS_DIR      = path.join(OUT_DIR, 'posts');
-const ASSETS_DIR     = path.join(OUT_DIR, 'assets');
-const AVATARS_DIR    = path.join(ASSETS_DIR, 'avatars');
-const LOGS_DIR       = path.join(OUT_DIR, 'logs');
-const LOG_FILE       = path.join(LOGS_DIR, 'build.log');
-const PROFILE_FILE   = path.join(OUT_DIR, 'profile.json');
+const OUT_DIR          = path.join(ROOT, USERNAME);
+const POSTS_META_DIR   = path.join(OUT_DIR, '_posts');
+const POSTS_DIR        = path.join(OUT_DIR, 'posts');
+const CASTINS_META_DIR = path.join(OUT_DIR, '_cast_ins');
+const CASTINS_DIR      = path.join(OUT_DIR, 'cast_ins');
+const DRAFTS_DIR       = path.join(OUT_DIR, 'drafts');
+const ASSETS_DIR       = path.join(OUT_DIR, 'assets');
+const AVATARS_DIR      = path.join(ASSETS_DIR, 'avatars');
+const LOGS_DIR         = path.join(OUT_DIR, 'logs');
+const LOG_FILE         = path.join(LOGS_DIR, 'build.log');
+const PROFILE_FILE     = path.join(OUT_DIR, 'profile.json');
 
 const AVATAR_DELAY_MS = 400;  // brief delay between cast-avatar downloads
 
@@ -161,6 +164,11 @@ function extractCast(post, posterUserId) {
     }));
 }
 
+// Draft cameos live on creation_config.cameo_profiles with the same shape.
+function extractDraftCast(draft, posterUserId) {
+  return extractCast({ cameo_profiles: draft?.creation_config?.cameo_profiles || [] }, posterUserId);
+}
+
 /* ── HTML helpers ───────────────────────────────────────────────── */
 function escapeHtml(s) {
   if (s == null) return '';
@@ -179,6 +187,49 @@ function formatNum(n) {
 function formatDate(ts) {
   if (!ts) return '';
   return new Date(ts * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+/**
+ * Decode a Sora draft/generation ID to its creation unix-seconds timestamp.
+ *
+ * Two observed formats:
+ *   - `gen_01k...` : `gen_` prefix + Crockford base32 ULID. The first 10
+ *     base32 chars encode milliseconds since epoch.
+ *   - 32-char hex  : the first 4 bytes (8 hex chars) are a unix-seconds
+ *     timestamp. Older drafts use this raw form; newer ones also appear as
+ *     `gen_<hex>` which we also handle.
+ *
+ * Returns 0 if we can't decode.
+ */
+const ULID_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+function idToTimestamp(id) {
+  if (!id) return 0;
+  const body = id.startsWith('gen_') ? id.slice(4) : id;
+
+  // 32-char hex: first 8 hex chars = unix seconds.
+  if (/^[a-f0-9]{32}$/i.test(body)) {
+    const secs = parseInt(body.slice(0, 8), 16);
+    return Number.isFinite(secs) && secs > 1_000_000_000 ? secs : 0;
+  }
+
+  // ULID (26-char Crockford base32). First 10 chars = milliseconds.
+  if (/^[0-9a-z]{26}$/i.test(body)) {
+    let ms = 0;
+    const head = body.slice(0, 10).toUpperCase();
+    for (const ch of head) {
+      const v = ULID_ALPHABET.indexOf(ch);
+      if (v < 0) return 0;
+      ms = ms * 32 + v;
+    }
+    return Math.floor(ms / 1000);
+  }
+
+  return 0;
+}
+
+function formatDraftDate(ts) {
+  if (!ts) return '';
+  return new Date(ts * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 function formatDuration(totalSec) {
@@ -214,6 +265,35 @@ a { color: inherit; text-decoration: none; }
 .about .counts { display: flex; gap: 20px; color: var(--muted); font-size: 14px; margin-top: 8px; flex-wrap: wrap; }
 .about .counts b { color: var(--fg); }
 .about .archived { color: var(--muted); font-size: 12px; margin-top: 8px; }
+
+.tabs {
+  display: flex; gap: 8px;
+  max-width: 1200px; margin: 0 auto; padding: 16px 24px 0;
+  border-bottom: 1px solid var(--border);
+}
+.tab-btn {
+  background: transparent; color: var(--muted);
+  border: none; border-bottom: 2px solid transparent;
+  padding: 10px 12px; font: inherit; cursor: pointer;
+  display: flex; align-items: center; gap: 6px;
+}
+.tab-btn:hover { color: var(--fg); }
+.tab-btn.active { color: var(--fg); border-bottom-color: var(--fg); }
+.tab-btn.empty { color: #555; }
+.tab-btn .tab-count {
+  background: var(--border); color: var(--muted);
+  border-radius: 10px; padding: 1px 8px; font-size: 11px;
+}
+.tab-btn.active .tab-count { background: #333; color: var(--fg); }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+.poster-badge {
+  display: inline-block; font-size: 11px; color: var(--muted);
+  background: #222; padding: 2px 6px; border-radius: 4px;
+  margin-bottom: 4px;
+}
+.poster-link { color: var(--fg); text-decoration: underline; text-decoration-color: var(--border); }
 
 .controls {
   display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
@@ -297,6 +377,33 @@ a { color: inherit; text-decoration: none; }
 .card .cast-teaser .avatars img { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--card); margin-left: -4px; object-fit: cover; background: #333; }
 .card .cast-teaser .avatars img:first-child { margin-left: 0; }
 
+.drafts-grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.draft-card .meta { padding: 10px 12px 12px; }
+.draft-card .caption {
+  font-size: 12.5px; line-height: 1.4; color: var(--fg);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; min-height: 52px; margin-bottom: 6px;
+}
+.draft-card .draft-footer {
+  display: flex; justify-content: space-between; align-items: baseline;
+  color: var(--muted); font-size: 11px; margin-top: 4px;
+}
+.draft-card .draft-id { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+/* Hint the browser to skip rendering work for off-screen draft cards. */
+.draft-card { content-visibility: auto; contain-intrinsic-size: 440px; }
+.drafts-sentinel { grid-column: 1 / -1; padding: 20px; text-align: center; color: var(--muted); font-size: 12px; }
+.drafts-sentinel[hidden] { display: none; }
+.draft-page .draft-prompt { white-space: pre-wrap; font-size: 15px; font-weight: 400; }
+.draft-page .draft-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.draft-page .badge {
+  background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+  padding: 3px 10px; border-radius: 999px; font-size: 11px;
+}
+.draft-page .draft-details { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.draft-page .draft-details code { font-size: 12px; color: var(--fg); word-break: break-all; }
+.draft-page .draft-details .muted { color: var(--muted); }
+.draft-page .draft-source-link { display: inline-block; margin-top: 8px; color: var(--muted); font-size: 11px; text-decoration: underline; text-decoration-color: var(--border); word-break: break-all; }
+
 .comments-section { padding: 16px 0; }
 .comments-section h2 { font-size: 16px; margin: 0 0 12px 0; }
 .comments, .replies { list-style: none; padding: 0; margin: 0; }
@@ -310,12 +417,44 @@ a { color: inherit; text-decoration: none; }
 .no-comments { color: var(--muted); }
 `;
 
-function profilePageHtml(profile, processed) {
+function profilePageHtml(profile, postsProcessed, castinsProcessed, draftsProcessed) {
   const title = `@${profile.username} · Sora archive`;
-  const cards = processed.map(({ post, thumbRel, cast }) => {
+
+  // For drafts we emit a compact JSON record instead of a big HTML string.
+  // The client-side virtualized renderer (in the inline <script> below) turns
+  // ~120 records at a time into DOM nodes — the full 13k+ index never lives in
+  // the DOM at once. Keeps memory and layout work bounded.
+  //
+  // Schema (short keys to minimize inline JSON size):
+  //   i: id, t: created_at unix seconds, p: prompt (capped),
+  //   d: duration seconds, h: 1 if local thumbnail exists,
+  //   c: [{u: username, n: display_name, a: local-avatar-path-or-empty}]
+  const PROMPT_CAP = 1200;  // cap per-card prompt in the search index
+  function compactDraft({ id, timestamp, draft, cast, hasThumb }) {
+    const prompt = draft?.prompt || draft?.creation_config?.prompt || '';
+    const out = { i: id, t: timestamp || 0 };
+    if (prompt) out.p = prompt.length > PROMPT_CAP ? prompt.slice(0, PROMPT_CAP) : prompt;
+    if (draft?.duration_s) out.d = Math.round(draft.duration_s * 10) / 10;
+    if (hasThumb) out.h = 1;
+    if (cast && cast.length) {
+      out.c = cast.map(c => {
+        const entry = { u: c.username || '' };
+        if (c.display_name) entry.n = c.display_name;
+        if (c.avatarRel) entry.a = c.avatarRel;
+        else if (c.profile_picture_url) entry.a = c.profile_picture_url;
+        return entry;
+      });
+    }
+    return out;
+  }
+
+  function renderCard({ post, thumbRel, cast, postAuthor }, kind) {
     const att = post.attachments?.[0];
     const duration = att?.duration_s ? `${att.duration_s.toFixed(1)}s` : '';
     const castList = cast || [];
+    const isCastIn = kind === 'castins';
+    const author = postAuthor || profile;
+
     const castTeaser = castList.length
       ? `<div class="cast-teaser" title="${escapeHtml(castList.map(c => '@' + c.username).join(', '))}">
            <span class="avatars">${castList.slice(0, 3).map(c =>
@@ -325,16 +464,24 @@ function profilePageHtml(profile, processed) {
          </div>`
       : '';
 
-    // Haystack for search: caption + @usernames + cast display names.
+    // On cast-in cards, call out the poster instead of a cast teaser.
+    const posterBadge = isCastIn
+      ? `<div class="poster-badge" title="Posted by @${escapeHtml(author.username)}">by @${escapeHtml(author.username)}</div>`
+      : '';
+
+    // Haystack: caption + author handle + cast handles/names.
     const searchBits = [
       post.text || '',
+      isCastIn ? '@' + (author.username || '') : '',
+      isCastIn ? (author.display_name || '') : '',
       ...castList.map(c => '@' + (c.username || '')),
       ...castList.map(c => c.display_name || ''),
     ].filter(Boolean).join(' ').toLowerCase();
 
+    const dir = isCastIn ? 'cast_ins' : 'posts';
     return `
       <a class="card"
-         href="posts/${encodeURIComponent(post.id)}/index.html"
+         href="${dir}/${encodeURIComponent(post.id)}/index.html"
          data-search="${escapeHtml(searchBits)}"
          data-posted="${post.posted_at || 0}"
          data-likes="${post.like_count || 0}"
@@ -345,6 +492,7 @@ function profilePageHtml(profile, processed) {
           ${duration ? `<span class="dur">${escapeHtml(duration)}</span>` : ''}
         </div>
         <div class="meta">
+          ${posterBadge}
           <div class="caption">${escapeHtml((post.text || '').slice(0, 140))}</div>
           <div class="stats">
             <span title="Views">▶ ${formatNum(post.view_count || 0)}</span>
@@ -354,7 +502,13 @@ function profilePageHtml(profile, processed) {
           ${castTeaser}
         </div>
       </a>`;
-  }).join('\n');
+  }
+
+  const postsCards   = postsProcessed.map(p => renderCard(p, 'posts')).join('\n');
+  const castinsCards = castinsProcessed.map(p => renderCard(p, 'castins')).join('\n');
+  // Drafts: no per-card HTML at build time. Just a compact JSON index that
+  // the inline script below renders into DOM 120 cards at a time.
+  const draftsIndexJson = JSON.stringify(draftsProcessed.map(compactDraft));
 
   return `<!doctype html>
 <html lang="en">
@@ -376,9 +530,14 @@ function profilePageHtml(profile, processed) {
       <span><b>${formatNum(profile.following_count || 0)}</b> following</span>
       <span><b>${formatNum(profile.likes_received_count || 0)}</b> likes received</span>
     </div>
-    <div class="archived">Archived ${escapeHtml(new Date().toLocaleString())} · ${processed.length} posts</div>
+    <div class="archived">Archived ${escapeHtml(new Date().toLocaleString())} · ${postsProcessed.length} posts · ${castinsProcessed.length} cast-ins · ${draftsProcessed.length} drafts</div>
   </div>
 </header>
+<nav class="tabs">
+  <button class="tab-btn active" data-tab="posts" type="button">Posts <span class="tab-count">${postsProcessed.length}</span></button>
+  <button class="tab-btn${castinsProcessed.length ? '' : ' empty'}" data-tab="castins" type="button">Cast in <span class="tab-count">${castinsProcessed.length}</span></button>
+  <button class="tab-btn${draftsProcessed.length ? '' : ' empty'}" data-tab="drafts" type="button">Drafts <span class="tab-count">${draftsProcessed.length}</span></button>
+</nav>
 <div class="controls">
   <input type="search" id="q" placeholder="Search description or @cast...">
   <select id="sort">
@@ -390,26 +549,212 @@ function profilePageHtml(profile, processed) {
   </select>
   <span class="count" id="count"></span>
 </div>
-<main class="grid">
-${cards}
+<main class="tab-panel active" data-tab="posts">
+  <div class="grid">
+${postsCards}
+  </div>
 </main>
-<div class="no-results" id="no-results" hidden>No posts match your search.</div>
+<main class="tab-panel" data-tab="castins" hidden>
+  ${castinsProcessed.length
+    ? `<div class="grid">${castinsCards}</div>`
+    : `<div class="no-results">No cast-ins captured yet. Run <code>node capture-cast-ins.js --username ${escapeHtml(profile.username)}</code>.</div>`}
+</main>
+<main class="tab-panel" data-tab="drafts" hidden>
+  ${draftsProcessed.length
+    ? `<div class="grid drafts-grid" id="drafts-grid"></div>
+       <div class="drafts-sentinel" id="drafts-sentinel">Loading more drafts…</div>
+       <script type="application/json" id="drafts-index">${draftsIndexJson.replace(/</g, '\\u003c')}</script>`
+    : `<div class="no-results">No drafts captured yet. Run <code>node capture-drafts.js --username ${escapeHtml(profile.username)}</code> then <code>node download-drafts.js --username ${escapeHtml(profile.username)}</code> then <code>node thumbnail-drafts.js --username ${escapeHtml(profile.username)}</code>.</div>`}
+</main>
+<div class="no-results" id="no-results" hidden>No items match your search.</div>
 <script>
 (() => {
   const q = document.getElementById('q');
   const sort = document.getElementById('sort');
   const count = document.getElementById('count');
-  const grid = document.querySelector('.grid');
   const noResults = document.getElementById('no-results');
-  const cards = Array.from(grid.querySelectorAll('.card'));
-  const total = cards.length;
+  const tabButtons = Array.from(document.querySelectorAll('.tab-btn'));
+  const tabPanels  = Array.from(document.querySelectorAll('.tab-panel'));
 
-  function apply() {
+  function activeTab() {
+    return tabButtons.find(b => b.classList.contains('active'))?.dataset.tab || 'posts';
+  }
+  function activePanel() {
+    return tabPanels.find(p => p.dataset.tab === activeTab());
+  }
+
+  // ── Drafts: virtualized renderer ──────────────────────────────
+  // Posts/cast-ins stay DOM-based (they're small, 2K cards). Drafts use an
+  // in-memory JSON index + batched incremental render to keep the DOM under
+  // ~500 nodes even with 10K+ drafts.
+  const DRAFTS_BATCH = 120;
+  const DRAFTS = (() => {
+    const tag = document.getElementById('drafts-index');
+    if (!tag) return [];
+    let arr = [];
+    try { arr = JSON.parse(tag.textContent); } catch { return []; }
+    // Pre-lowercase + pre-join the search haystack per draft so keystroke
+    // latency isn't O(N × prompt-length × toLowerCase).
+    for (const d of arr) {
+      let s = (d.i || '').toLowerCase();
+      if (d.p) s += ' ' + d.p.toLowerCase();
+      if (d.c) for (const c of d.c) {
+        if (c.u) s += ' @' + c.u.toLowerCase();
+        if (c.n) s += ' ' + c.n.toLowerCase();
+      }
+      if (d.t) s += ' ' + new Date(d.t * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }).toLowerCase();
+      d._s = s;
+    }
+    return arr;
+  })();
+  let draftsFiltered = DRAFTS;   // current filter result
+  let draftsRendered = 0;        // how many of draftsFiltered are in the DOM
+  const draftsGrid = document.getElementById('drafts-grid');
+  const draftsSentinel = document.getElementById('drafts-sentinel');
+
+  function esc(s) {
+    if (s == null) return '';
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function fmtDraftDate(t) {
+    if (!t) return '';
+    return new Date(t * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+  function shortId(id) {
+    return (id.startsWith('gen_') ? id.slice(4) : id).slice(0, 8);
+  }
+  function draftCardHtml(d) {
+    const prompt = d.p || '';
+    const displayPrompt = prompt ? (prompt.length > 180 ? prompt.slice(0, 180) : prompt) : '(no prompt captured)';
+    const dur = d.d ? d.d.toFixed(1) + 's' : '';
+    const cast = d.c || [];
+    const castTeaser = cast.length
+      ? '<div class="cast-teaser" title="' + esc(cast.map(c => '@' + c.u).join(', ')) + '">'
+        + '<span class="avatars">'
+        + cast.slice(0, 3).map(c => '<img loading="lazy" src="' + esc(c.a || '') + '" alt="" onerror="this.style.display=\\'none\\'">').join('')
+        + '</span><span>cast ' + cast.length + '</span></div>'
+      : '';
+    return '<a class="card draft-card" href="drafts/' + encodeURIComponent(d.i) + '/index.html">'
+      +   '<div class="thumb">'
+      +     (d.h ? '<img loading="lazy" src="drafts/' + encodeURIComponent(d.i) + '/thumbnail.jpg" alt="" onerror="this.style.display=\\'none\\'">' : '')
+      +     (dur ? '<span class="dur">' + esc(dur) + '</span>' : '')
+      +   '</div>'
+      +   '<div class="meta">'
+      +     '<div class="caption">' + esc(displayPrompt) + '</div>'
+      +     '<div class="draft-footer"><span class="draft-date">' + esc(fmtDraftDate(d.t) || '—') + '</span><span class="draft-id" title="' + esc(d.i) + '">#' + esc(shortId(d.i)) + '</span></div>'
+      +     castTeaser
+      +   '</div>'
+      + '</a>';
+  }
+
+  function renderNextDraftsBatch() {
+    if (!draftsGrid) return;
+    const end = Math.min(draftsRendered + DRAFTS_BATCH, draftsFiltered.length);
+    if (end === draftsRendered) { if (draftsSentinel) draftsSentinel.hidden = true; return; }
+    const chunks = [];
+    for (let i = draftsRendered; i < end; i++) chunks.push(draftCardHtml(draftsFiltered[i]));
+    draftsGrid.insertAdjacentHTML('beforeend', chunks.join(''));
+    draftsRendered = end;
+    if (draftsSentinel) {
+      if (draftsRendered >= draftsFiltered.length) {
+        draftsSentinel.hidden = true;
+        draftsSentinel.textContent = '';
+      } else {
+        draftsSentinel.hidden = false;
+        draftsSentinel.textContent = 'Loading more drafts…';
+      }
+    }
+  }
+
+  function resetDraftsRender() {
+    if (!draftsGrid) return;
+    draftsGrid.innerHTML = '';
+    draftsRendered = 0;
+    if (draftsSentinel) draftsSentinel.hidden = false;
+    if (activeTab() === 'drafts') fillDraftsViewport();
+  }
+
+  // Render one batch per animation frame while the sentinel is still near
+  // the viewport. Rendering synchronously in a tight loop (120 cards × many
+  // batches) blocks the main thread for seconds — spreading one batch per
+  // rAF keeps per-frame work under ~20ms even when a search drops 10k cards
+  // and the user is scrolled to the bottom.
+  function fillDraftsViewport() {
+    if (!draftsSentinel || activeTab() !== 'drafts') return;
+    if (draftsRendered >= draftsFiltered.length) return;
+    const rect = draftsSentinel.getBoundingClientRect();
+    // Lookahead: render if sentinel is anywhere within the viewport + 1500px
+    // of buffer below it. Otherwise do nothing — next scroll will re-check.
+    if (rect.top > window.innerHeight + 1500) return;
+    renderNextDraftsBatch();
+    // Still below threshold? Queue another frame.
+    if (draftsRendered < draftsFiltered.length) {
+      const r2 = draftsSentinel.getBoundingClientRect();
+      if (r2.top <= window.innerHeight + 1500) requestAnimationFrame(fillDraftsViewport);
+    }
+  }
+
+  function applyDrafts() {
+    const query = q.value.trim().toLowerCase();
+    const mode = sort.value;
+    const total = DRAFTS.length;
+    let list = DRAFTS;
+    if (query) list = list.filter(d => d._s && d._s.indexOf(query) !== -1);
+    // Drafts don't have likes/comments/views — those modes fall back to newest.
+    const asc = mode === 'oldest';
+    list = list.slice().sort((a, b) => asc ? (a.t || 0) - (b.t || 0) : (b.t || 0) - (a.t || 0));
+    draftsFiltered = list;
+    resetDraftsRender();
+    const visible = list.length;
+    count.textContent = query ? visible + ' of ' + total + ' drafts' : total + ' drafts';
+    noResults.hidden = visible > 0 || total === 0;
+  }
+
+  // Keep the drafts grid topped up via two independent triggers:
+  //  (a) IntersectionObserver on the sentinel (primary; fires on scroll, on
+  //      visibility change, and after layout changes)
+  //  (b) scroll + resize listeners (secondary; covers environments where
+  //      the IO doesn't fire on a tab that started hidden)
+  // Both call fillDraftsViewport, which is idempotent and cheap when there's
+  // nothing to do.
+  let fillPending = false;
+  function scheduleFill() {
+    if (fillPending) return;
+    fillPending = true;
+    requestAnimationFrame(() => { fillPending = false; fillDraftsViewport(); });
+  }
+  if (draftsSentinel && 'IntersectionObserver' in window) {
+    new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) scheduleFill();
+    }, { rootMargin: '1500px 0px' }).observe(draftsSentinel);
+  }
+  window.addEventListener('scroll', scheduleFill, { passive: true });
+  window.addEventListener('resize', scheduleFill, { passive: true });
+  // Clicking the sentinel also loads more — fallback for any env where scroll
+  // events don't propagate (and convenient "Load more" for users who prefer it).
+  if (draftsSentinel) {
+    draftsSentinel.style.cursor = 'pointer';
+    draftsSentinel.addEventListener('click', () => fillDraftsViewport());
+  }
+  // Test hook — lets automation verify the render pipeline without relying
+  // on scroll events that CDP doesn't always dispatch.
+  window.__drafts = { fill: fillDraftsViewport };
+
+  // ── Posts / cast-ins: DOM-based filter+sort (small enough) ────
+  function applyDomTab() {
+    const panel = activePanel();
+    if (!panel) return;
+    const grid = panel.querySelector('.grid');
+    if (!grid) { count.textContent = '0 items'; noResults.hidden = true; return; }
+    const cards = Array.from(grid.querySelectorAll('.card'));
+    const total = cards.length;
     const query = q.value.trim().toLowerCase();
     const mode = sort.value;
     let visible = 0;
     for (const c of cards) {
-      const match = !query || c.dataset.search.includes(query);
+      const match = !query || (c.dataset.search && c.dataset.search.includes(query));
       c.style.display = match ? '' : 'none';
       if (match) visible++;
     }
@@ -421,22 +766,61 @@ ${cards}
       return (+b.dataset[k]) - (+a.dataset[k]);
     });
     for (const c of sortable) grid.appendChild(c);
-    count.textContent = query ? visible + ' of ' + total : total + ' posts';
-    noResults.hidden = visible > 0;
+    const labelByTab = { posts: 'posts', castins: 'cast-ins' };
+    const label = labelByTab[activeTab()] || 'items';
+    count.textContent = query ? visible + ' of ' + total : total + ' ' + label;
+    noResults.hidden = visible > 0 || total === 0;
   }
 
-  q.addEventListener('input', apply);
+  function apply() {
+    if (activeTab() === 'drafts') applyDrafts();
+    else applyDomTab();
+  }
+
+  function setTab(name) {
+    tabButtons.forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+    tabPanels.forEach(p => {
+      const match = p.dataset.tab === name;
+      p.classList.toggle('active', match);
+      p.hidden = !match;
+    });
+    apply();
+    // After the drafts panel becomes visible, layout recomputes. Top up so
+    // the sentinel isn't already in view without more cards loaded.
+    if (name === 'drafts') requestAnimationFrame(fillDraftsViewport);
+    syncHash();
+  }
+
+  // Debounced apply for the search input. Sort + tab-switch stay immediate.
+  // Drafts filter iterates 13k records; typing fast would otherwise re-run on
+  // every keystroke. Posts/cast-ins are small enough that this is invisible.
+  let searchTimer = null;
+  function scheduleApply() {
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { searchTimer = null; apply(); }, 120);
+  }
+  tabButtons.forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
+  q.addEventListener('input', scheduleApply);
   sort.addEventListener('change', apply);
 
-  // Restore state from URL hash (e.g. #q=sama&sort=likes)
+  // Restore state from URL hash (e.g. #tab=drafts&q=2025&sort=oldest)
+  const validTabs = ['posts', 'castins', 'drafts'];
   const params = new URLSearchParams(location.hash.slice(1));
+  if (params.has('tab') && validTabs.includes(params.get('tab'))) {
+    tabButtons.forEach(b => b.classList.toggle('active', b.dataset.tab === params.get('tab')));
+    tabPanels.forEach(p => {
+      const match = p.dataset.tab === params.get('tab');
+      p.classList.toggle('active', match);
+      p.hidden = !match;
+    });
+  }
   if (params.has('q')) q.value = params.get('q');
   if (params.has('sort')) sort.value = params.get('sort');
   apply();
 
-  // Persist to hash so links/share keep filter
   function syncHash() {
     const p = new URLSearchParams();
+    if (activeTab() !== 'posts') p.set('tab', activeTab());
     if (q.value) p.set('q', q.value);
     if (sort.value && sort.value !== 'newest') p.set('sort', sort.value);
     history.replaceState(null, '', p.toString() ? '#' + p.toString() : location.pathname);
@@ -449,12 +833,104 @@ ${cards}
 </html>`;
 }
 
-function postPageHtml(post, profile, commentsObj, videoRel, thumbRel, cast) {
+function draftPageHtml(id, timestamp, draft, ownerProfile, cast, hasVideo, hasThumb) {
+  const prompt     = draft?.prompt || draft?.creation_config?.prompt || '';
+  const duration   = draft?.duration_s;
+  const orientation = draft?.creation_config?.orientation;
+  const n_frames   = draft?.creation_config?.n_frames;
+  const style      = draft?.creation_config?.style;
+  const w          = draft?.width;
+  const h          = draft?.height;
+  const generationType = draft?.generation_type;
+  const hasChildren = draft?.has_children;
+  const storyboardId = draft?.creation_config?.storyboard_id || draft?.storyboard_id;
+  const remixTarget  = draft?.creation_config?.remix_target_post;
+  const taskId       = draft?.task_id;
+
+  const badges = [
+    duration ? `${duration.toFixed(1)}s` : null,
+    (w && h) ? `${w}×${h}` : null,
+    orientation || null,
+    n_frames ? `${n_frames} frames` : null,
+    style || null,
+    generationType && generationType !== 'video_gen' ? generationType : null,
+    hasChildren ? 'has children' : null,
+    storyboardId ? 'storyboard' : null,
+    remixTarget ? 'remix' : null,
+  ].filter(Boolean);
+
+  const dateStr = formatDraftDate(timestamp);
+  const fullDate = timestamp ? new Date(timestamp * 1000).toISOString() : '';
+
+  const castHtml = (cast && cast.length)
+    ? `<section class="cast-section">
+         <h2>Cast (${cast.length})</h2>
+         <div class="cast-members">
+           ${cast.map(c => `
+             <a class="cast-member" href="${escapeHtml(c.permalink || '#')}" target="_blank" rel="noopener">
+               <img class="cast-avatar" src="${escapeHtml(c.avatarRel || c.profile_picture_url || '')}" alt="" onerror="this.style.display='none'">
+               <span class="cast-name">
+                 <span class="handle">@${escapeHtml(c.username)}</span>
+                 ${c.display_name ? `<span class="disp">${escapeHtml(c.display_name)}</span>` : ''}
+                 ${c.isCharacter ? `<span class="character">character${c.ownerUsername ? ' of @' + escapeHtml(c.ownerUsername) : ''}</span>` : ''}
+               </span>
+             </a>`).join('')}
+         </div>
+       </section>`
+    : '';
+
+  const videoBlock = hasVideo
+    ? `<div class="video-wrap">
+         <video controls ${hasThumb ? `poster="thumbnail.jpg"` : ''} playsinline>
+           <source src="video.mp4" type="video/mp4">
+         </video>
+       </div>`
+    : `<div class="no-video">Video not downloaded locally.${taskId ? ` Task: ${escapeHtml(taskId)}` : ''}</div>`;
+
+  const promptBlock = prompt
+    ? `<h1 class="caption draft-prompt">${escapeHtml(prompt)}</h1>`
+    : `<h1 class="caption"><em>(no prompt captured — run <code>backfill-prompts.js</code>)</em></h1>`;
+
+  const sourcePath = draft?.encodings?.source?.path;
+  const rawLink = sourcePath
+    ? `<a class="draft-source-link" href="${escapeHtml(sourcePath)}" target="_blank" rel="noopener">original signed source ↗</a>`
+    : '';
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>${escapeHtml(prompt.slice(0, 60) || 'Draft ' + id.slice(0, 16))} · @${escapeHtml(ownerProfile.username)}</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body class="post-page draft-page">
+<nav><a href="../../index.html#tab=drafts">← @${escapeHtml(ownerProfile.username)} / drafts</a></nav>
+<article>
+  ${videoBlock}
+  <div class="post-meta">
+    ${promptBlock}
+    ${badges.length ? `<div class="draft-badges">${badges.map(b => `<span class="badge">${escapeHtml(b)}</span>`).join('')}</div>` : ''}
+    <div class="draft-details">
+      <div><span class="muted">ID:</span> <code>${escapeHtml(id)}</code></div>
+      ${dateStr ? `<div><span class="muted">Created:</span> ${escapeHtml(dateStr)}${fullDate ? ` <span class="muted" title="${escapeHtml(fullDate)}">(${escapeHtml(fullDate)})</span>` : ''}</div>` : ''}
+      ${rawLink}
+    </div>
+  </div>
+  ${castHtml}
+</article>
+</body>
+</html>`;
+}
+
+function postPageHtml(post, ownerProfile, commentsObj, videoRel, thumbRel, cast, postAuthor, kind) {
   const caption = post.text || '';
   const posted = formatDate(post.posted_at);
   const comments = commentsObj?.items || [];
   const isPending = !!commentsObj?._pending;
   const lastError = commentsObj?._lastError;
+  const author = postAuthor || ownerProfile;
+  const isOwnPost = author?.user_id === ownerProfile?.user_id;
+  const indexHash = kind === 'castins' ? '#tab=castins' : '';
   const castHtml = (cast && cast.length)
     ? `<section class="cast-section">
          <h2>Cast (${cast.length})</h2>
@@ -511,11 +987,11 @@ function postPageHtml(post, profile, commentsObj, videoRel, thumbRel, cast) {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>${escapeHtml(caption.slice(0, 60) || post.id)} · @${escapeHtml(profile.username)}</title>
+<title>${escapeHtml(caption.slice(0, 60) || post.id)} · @${escapeHtml(ownerProfile.username)}</title>
 <link rel="stylesheet" href="../../style.css">
 </head>
 <body class="post-page">
-<nav><a href="../../index.html">← @${escapeHtml(profile.username)}</a></nav>
+<nav><a href="../../index.html${indexHash}">← @${escapeHtml(ownerProfile.username)}${kind === 'castins' ? ' / cast in' : ''}</a></nav>
 <article>
   ${videoBlock}
   <div class="post-meta">
@@ -526,7 +1002,9 @@ function postPageHtml(post, profile, commentsObj, videoRel, thumbRel, cast) {
       <span>💬 ${formatNum(post.reply_count || 0)} replies</span>
       ${post.remix_count ? `<span>🎬 ${formatNum(post.remix_count)} remixes</span>` : ''}
     </div>
-    <div class="posted">Posted ${escapeHtml(posted)}</div>
+    <div class="posted">
+      Posted ${escapeHtml(posted)}${isOwnPost ? '' : ` by <a class="poster-link" href="${escapeHtml(author?.permalink || '#')}" target="_blank" rel="noopener">@${escapeHtml(author?.username || 'unknown')}</a>`}
+    </div>
   </div>
   ${castHtml}
   <section class="comments-section">
@@ -631,34 +1109,80 @@ async function rateDelay() {
     try { await downloadWithRetries(profile.profile_picture_url, avatarDest); } catch {}
   }
 
-  // Load all captured posts, sorted newest → oldest by posted_at
-  const metaFiles = fs.existsSync(POSTS_META_DIR)
-    ? fs.readdirSync(POSTS_META_DIR).filter(f => f.endsWith('.json'))
-    : [];
-  const entries = metaFiles.map(f => {
-    const data = JSON.parse(fs.readFileSync(path.join(POSTS_META_DIR, f), 'utf-8'));
-    return data;
-  });
-  entries.sort((a, b) => (b.post?.posted_at || 0) - (a.post?.posted_at || 0));
-  totalPosts = entries.length;
+  // Load both captured data sets, sorted newest → oldest.
+  function loadEntries(metaDir) {
+    if (!fs.existsSync(metaDir)) return [];
+    return fs.readdirSync(metaDir)
+      .filter(f => f.endsWith('.json'))
+      .map(f => JSON.parse(fs.readFileSync(path.join(metaDir, f), 'utf-8')))
+      .sort((a, b) => (b.post?.posted_at || 0) - (a.post?.posted_at || 0));
+  }
+  const postsEntries   = loadEntries(POSTS_META_DIR);
+  const castinsEntries = loadEntries(CASTINS_META_DIR);
+  totalPosts = postsEntries.length + castinsEntries.length;
 
-  if (totalPosts === 0) {
-    console.error(`No captured posts found in ${POSTS_META_DIR}.`);
-    console.error(`Run capture-profile.js --username ${USERNAME} first.`);
+  // Load drafts early so the avatar pre-pass below can include their cameos.
+  // Include any draft folder that has a video OR draft.json — both are valid
+  // "we know something about this draft" states.
+  function loadDraftEntries(dir) {
+    if (!fs.existsSync(dir)) return [];
+    const out = [];
+    for (const id of fs.readdirSync(dir)) {
+      const idDir     = path.join(dir, id);
+      if (!fs.statSync(idDir).isDirectory()) continue;
+      const videoPath = path.join(idDir, 'video.mp4');
+      const thumbPath = path.join(idDir, 'thumbnail.jpg');
+      const jsonPath  = path.join(idDir, 'draft.json');
+      const hasVideo = fs.existsSync(videoPath) && fs.statSync(videoPath).size > MIN_FILE_KB * 1024;
+      const hasThumb = fs.existsSync(thumbPath) && fs.statSync(thumbPath).size > 0;
+      const hasJson  = fs.existsSync(jsonPath);
+      if (!hasVideo && !hasJson) continue;
+      let draft = null;
+      if (hasJson) {
+        try { draft = JSON.parse(fs.readFileSync(jsonPath, 'utf-8')); }
+        catch (e) { log(`bad draft.json for ${id}: ${e.message}`); }
+      }
+      // Prefer API's created_at (precise seconds) over ID-decoded timestamp.
+      const timestamp = draft?.created_at
+        ? Math.floor(draft.created_at)
+        : idToTimestamp(id);
+      out.push({ id, draft, timestamp, hasVideo, hasThumb });
+    }
+    return out;
+  }
+  const draftsEntries = loadDraftEntries(DRAFTS_DIR);
+  const hasDrafts = draftsEntries.length > 0;
+  if (totalPosts === 0 && !hasDrafts) {
+    console.error(`No captured data found in ${POSTS_META_DIR}, ${CASTINS_META_DIR}, or ${DRAFTS_DIR}.`);
+    console.error(`Run capture-profile.js --username ${USERNAME} first (and/or capture-cast-ins.js / capture-drafts.js).`);
     process.exit(1);
   }
 
-  log(`--- Session started. Posts: ${totalPosts} rebuild=${REBUILD} ---`);
+  log(`--- Session started. Posts: ${postsEntries.length}  Cast-ins: ${castinsEntries.length}  Drafts: ${draftsEntries.length}  rebuild=${REBUILD} ---`);
   setupKeyboard();
 
   // ── Avatar pre-pass: download unique cast-member avatars ──────
+  // Include cast members from BOTH posts and cast-ins, plus the poster
+  // profiles of cast-ins (so their attribution badge can show a local avatar
+  // too — useful when Sora sunsets and the signed URLs expire).
   fs.mkdirSync(AVATARS_DIR, { recursive: true });
   const uniqueCast = new Map();  // user_id -> { url, username }
-  for (const entry of entries) {
+  function noteAvatar(uid, url, username) {
+    if (uid && url && !uniqueCast.has(uid)) uniqueCast.set(uid, { url, username });
+  }
+  for (const entry of [...postsEntries, ...castinsEntries]) {
     for (const c of extractCast(entry.post, profile.user_id)) {
-      if (!uniqueCast.has(c.user_id) && c.profile_picture_url) {
-        uniqueCast.set(c.user_id, { url: c.profile_picture_url, username: c.username });
-      }
+      noteAvatar(c.user_id, c.profile_picture_url, c.username);
+    }
+  }
+  for (const entry of castinsEntries) {
+    const p = entry.profile;
+    if (p) noteAvatar(p.user_id, p.profile_picture_url, p.username);
+  }
+  for (const entry of draftsEntries) {
+    if (!entry.draft) continue;
+    for (const c of extractDraftCast(entry.draft, profile.user_id)) {
+      noteAvatar(c.user_id, c.profile_picture_url, c.username);
     }
   }
   const avatarMap = new Set();  // user_ids with local avatar on disk
@@ -699,100 +1223,143 @@ async function rateDelay() {
 
   renderUI();
 
-  const processed = [];
+  // Process either the posts set or the cast-ins set; returns an array of
+  // {post, thumbRel, cast, postAuthor} suitable for the profile grid.
+  async function processEntries({ entries, kind, metaDir, outDir }) {
+    const processed = [];
+    for (const entry of entries) {
+      if (stopping) return processed;
+      await waitWhilePaused();
+      if (stopping) return processed;
 
-  for (const entry of entries) {
-    if (stopping) break;
-    await waitWhilePaused();
-    if (stopping) break;
+      const { post, profile: postAuthor, comments } = entry;
+      const postId = post.id;
+      const postDir = path.join(outDir, postId);
+      fs.mkdirSync(postDir, { recursive: true });
 
-    const { post, profile: postProfile, comments } = entry;
-    const postId = post.id;
-    const postDir = path.join(POSTS_DIR, postId);
-    fs.mkdirSync(postDir, { recursive: true });
+      const videoDest = path.join(postDir, 'video.mp4');
+      const thumbDest = path.join(postDir, 'thumbnail.jpg');
+      const htmlDest  = path.join(postDir, 'index.html');
 
-    const videoDest = path.join(postDir, 'video.mp4');
-    const thumbDest = path.join(postDir, 'thumbnail.jpg');
-    const htmlDest  = path.join(postDir, 'index.html');
+      const att = post.attachments?.[0];
 
-    const att = post.attachments?.[0];
+      const hasVideo = fs.existsSync(videoDest) && fs.statSync(videoDest).size > MIN_FILE_KB * 1024;
+      const hasThumb = fs.existsSync(thumbDest);
 
-    const hasVideo = fs.existsSync(videoDest) && fs.statSync(videoDest).size > MIN_FILE_KB * 1024;
-    const hasThumb = fs.existsSync(thumbDest);
+      let didDownload = false;
 
-    let didDownload = false;
-
-    if (!hasVideo) {
-      const url = bestVideoUrl(att);
-      if (url) {
-        currentStatus = `downloading video ${postId}`;
-        renderUI();
-        const res = await downloadWithRetries(url, videoDest);
-        if (res.ok) {
-          log(`OK video ${postId} (${Math.round(res.size / 1024)} KB)`);
-          didDownload = true;
-        } else {
-          log(`FAILED video ${postId}`);
-          failed++;
-          currentStatus = `FAILED video ${postId}`;
+      if (!hasVideo) {
+        const url = bestVideoUrl(att);
+        if (url) {
+          currentStatus = `downloading video ${postId} (${kind})`;
           renderUI();
-          continue;
+          const res = await downloadWithRetries(url, videoDest);
+          if (res.ok) {
+            log(`OK video ${kind} ${postId} (${Math.round(res.size / 1024)} KB)`);
+            didDownload = true;
+          } else {
+            log(`FAILED video ${kind} ${postId}`);
+            failed++;
+            currentStatus = `FAILED video ${postId}`;
+            renderUI();
+            continue;
+          }
         }
       }
-    }
 
-    if (!hasThumb) {
-      const turl = thumbUrl(att, post);
-      if (turl) {
-        try { await downloadWithRetries(turl, thumbDest); didDownload = true; } catch {}
+      if (!hasThumb) {
+        const turl = thumbUrl(att, post);
+        if (turl) {
+          try { await downloadWithRetries(turl, thumbDest); didDownload = true; } catch {}
+        }
       }
+
+      const videoRel = fs.existsSync(videoDest) ? 'video.mp4' : '';
+      const thumbRel = fs.existsSync(thumbDest) ? 'thumbnail.jpg' : '';
+
+      const rawCast = extractCast(post, profile.user_id);
+      const castForPost = attachAvatars(rawCast, '../../');
+      const castForGrid = attachAvatars(rawCast, '');
+
+      // Regenerate HTML if forced, missing, or the metadata JSON is newer.
+      const metaPath = path.join(metaDir, `${postId}.json`);
+      const metaMtime = fs.statSync(metaPath).mtimeMs;
+      const htmlMtime = fs.existsSync(htmlDest) ? fs.statSync(htmlDest).mtimeMs : 0;
+      if (REBUILD || !fs.existsSync(htmlDest) || metaMtime > htmlMtime) {
+        fs.writeFileSync(
+          htmlDest,
+          postPageHtml(post, profile, comments, videoRel, thumbRel, castForPost, postAuthor, kind)
+        );
+      }
+
+      const dir = kind === 'castins' ? 'cast_ins' : 'posts';
+      processed.push({
+        post,
+        thumbRel: thumbRel ? `${dir}/${postId}/thumbnail.jpg` : '',
+        cast: castForGrid,
+        postAuthor,
+      });
+
+      if (didDownload) {
+        downloaded++;
+        currentStatus = `${postId} OK`;
+      } else {
+        skipped++;
+        currentStatus = `${postId} (cached)`;
+      }
+      renderUI();
+
+      if (didDownload && !stopping) await rateDelay();
     }
+    return processed;
+  }
 
-    const videoRel = fs.existsSync(videoDest) ? 'video.mp4' : '';
-    const thumbRel = fs.existsSync(thumbDest) ? 'thumbnail.jpg' : '';
+  fs.mkdirSync(POSTS_DIR, { recursive: true });
+  fs.mkdirSync(CASTINS_DIR, { recursive: true });
 
-    const rawCast = extractCast(post, profile.user_id);
-    const castForPost = attachAvatars(rawCast, '../../');
-    const castForGrid = attachAvatars(rawCast, '');
+  const postsProcessed   = await processEntries({ entries: postsEntries,   kind: 'posts',   metaDir: POSTS_META_DIR,   outDir: POSTS_DIR });
+  const castinsProcessed = stopping ? [] : await processEntries({ entries: castinsEntries, kind: 'castins', metaDir: CASTINS_META_DIR, outDir: CASTINS_DIR });
 
-    // Regenerate HTML if: forced rebuild, missing, or the metadata JSON is
-    // newer than the HTML (common case — you just ran capture-profile.js
-    // --comments-only but forgot --rebuild).
-    const metaPath = path.join(POSTS_META_DIR, `${postId}.json`);
-    const metaMtime = fs.statSync(metaPath).mtimeMs;
-    const htmlMtime = fs.existsSync(htmlDest) ? fs.statSync(htmlDest).mtimeMs : 0;
-    if (REBUILD || !fs.existsSync(htmlDest) || metaMtime > htmlMtime) {
-      fs.writeFileSync(
-        htmlDest,
-        postPageHtml(post, profile, comments, videoRel, thumbRel, castForPost)
-      );
-    }
-
-    processed.push({
-      post,
-      thumbRel: thumbRel ? `posts/${postId}/thumbnail.jpg` : '',
-      cast: castForGrid,
-    });
-
-    if (didDownload) {
-      downloaded++;
-      currentStatus = `${postId} OK`;
-    } else {
-      skipped++;
-      currentStatus = `${postId} (cached)`;
-    }
+  // Drafts: videos/thumbnails come from the dedicated scripts, metadata from
+  // backfill-prompts.js. Here we regenerate each draft's index.html and build
+  // the grid entries. No network work.
+  const draftsProcessed = [];
+  if (!stopping && draftsEntries.length > 0) {
+    currentStatus = 'building draft pages...';
     renderUI();
+    for (const entry of draftsEntries) {
+      const { id, draft, timestamp, hasVideo, hasThumb } = entry;
+      const rawCast = draft ? extractDraftCast(draft, profile.user_id) : [];
+      const castForPage = attachAvatars(rawCast, '../../');
+      const castForGrid = attachAvatars(rawCast, '');
 
-    if (didDownload && !stopping) await rateDelay();
+      const htmlDest = path.join(DRAFTS_DIR, id, 'index.html');
+      const jsonPath = path.join(DRAFTS_DIR, id, 'draft.json');
+      // Rebuild HTML if forced, missing, or the draft.json is newer than it.
+      const jsonMtime = fs.existsSync(jsonPath) ? fs.statSync(jsonPath).mtimeMs : 0;
+      const htmlMtime = fs.existsSync(htmlDest) ? fs.statSync(htmlDest).mtimeMs : 0;
+      if (REBUILD || !fs.existsSync(htmlDest) || jsonMtime > htmlMtime) {
+        fs.writeFileSync(
+          htmlDest,
+          draftPageHtml(id, timestamp, draft, profile, castForPage, hasVideo, hasThumb)
+        );
+      }
+
+      draftsProcessed.push({ id, timestamp, draft, cast: castForGrid, hasThumb });
+    }
+    // Newest first.
+    draftsProcessed.sort((a, b) => b.timestamp - a.timestamp);
+    log(`Drafts: ${draftsProcessed.length} indexed (${draftsProcessed.filter(d => d.draft).length} with metadata)`);
   }
 
   // Profile index + CSS (always refresh)
   fs.writeFileSync(path.join(OUT_DIR, 'style.css'), CSS);
-  fs.writeFileSync(path.join(OUT_DIR, 'index.html'), profilePageHtml(profile, processed));
+  fs.writeFileSync(path.join(OUT_DIR, 'index.html'), profilePageHtml(profile, postsProcessed, castinsProcessed, draftsProcessed));
 
   if (process.stdin.isTTY) process.stdin.setRawMode(false);
 
-  const pendingComments = entries.filter(e => e.comments?._pending).length;
+  const pendingPosts   = postsEntries.filter(e => e.comments?._pending).length;
+  const pendingCastins = castinsEntries.filter(e => e.comments?._pending).length;
 
   const finalMsg = stopping
     ? `Stopped. Downloaded: ${downloaded}, Skipped: ${skipped}, Failed: ${failed}`
@@ -802,10 +1369,16 @@ async function rateDelay() {
   console.log(`\n  ${finalMsg}`);
   console.log(`  Archive: ${path.join(OUT_DIR, 'index.html')}`);
   console.log(`  Log: ${LOG_FILE}`);
-  if (pendingComments > 0) {
-    console.log(`\n  ⚠  ${pendingComments} post(s) still have pending comments.`);
+  if (pendingPosts > 0) {
+    console.log(`\n  ⚠  ${pendingPosts} post(s) still have pending comments.`);
     console.log(`     Run: node capture-profile.js --comments-only --username ${USERNAME}`);
-    console.log(`     Then rerun: node build-archive.js --rebuild --username ${USERNAME}`);
+  }
+  if (pendingCastins > 0) {
+    console.log(`\n  ⚠  ${pendingCastins} cast-in(s) still have pending comments.`);
+    console.log(`     Run: node capture-cast-ins.js --comments-only --username ${USERNAME}`);
+  }
+  if (pendingPosts > 0 || pendingCastins > 0) {
+    console.log(`     Then rerun: node build-archive.js --username ${USERNAME} (auto-rebuilds stale pages)`);
   }
   console.log('');
 
