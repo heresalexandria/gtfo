@@ -240,6 +240,20 @@ function formatDuration(totalSec) {
   return `${m}m${String(s).padStart(2, '0')}s`;
 }
 
+// Build a download filename: slug from caption/prompt + short id, capped length.
+// Falls back to just the id if there's no text. The download attribute is a
+// hint browsers honor when the URL is same-origin (which our local archive is).
+function downloadName(text, id) {
+  const slug = String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+    .replace(/-+$/, '');
+  const shortId = (id || '').replace(/^(s_|gen_)/, '').slice(0, 12);
+  return (slug ? slug + '-' : '') + (shortId || 'video') + '.mp4';
+}
+
 /* ── HTML templates ─────────────────────────────────────────────── */
 const CSS = `:root {
   --bg: #0b0b0c;
@@ -358,6 +372,16 @@ a { color: inherit; text-decoration: none; }
 .video-wrap { background: #000; border-radius: 12px; overflow: hidden; }
 .video-wrap video { width: 100%; display: block; max-height: 80vh; background: #000; }
 .no-video { padding: 40px; text-align: center; color: var(--muted); background: #000; border-radius: 12px; }
+.video-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.download-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--card); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 14px; font: inherit; font-size: 13px;
+  text-decoration: none; cursor: pointer;
+}
+.download-btn:hover { border-color: #555; background: #1f1f23; }
+.download-btn .dl-icon { font-size: 14px; }
 .post-meta { padding: 16px 0; border-bottom: 1px solid var(--border); }
 .post-meta .caption { font-size: 18px; margin: 0 0 12px 0; font-weight: 500; white-space: pre-wrap; }
 .stats.big { display: flex; gap: 16px; color: var(--muted); font-size: 14px; flex-wrap: wrap; }
@@ -1058,11 +1082,17 @@ function draftPageHtml(id, timestamp, draft, ownerProfile, cast, hasVideo, hasTh
        </div>`
     : '';
 
+  const dlName = downloadName(prompt, id);
   const videoBlock = hasVideo
     ? `<div class="video-wrap">
          <video controls ${hasThumb ? `poster="thumbnail.jpg"` : ''} playsinline>
            <source src="video.mp4" type="video/mp4">
          </video>
+       </div>
+       <div class="video-actions">
+         <a class="download-btn" href="video.mp4" download="${escapeHtml(dlName)}">
+           <span class="dl-icon">⬇</span> Download video
+         </a>
        </div>`
     : bannerHtml || `<div class="no-video">Video unavailable.</div>`;
 
@@ -1162,11 +1192,17 @@ function postPageHtml(post, ownerProfile, commentsObj, videoRel, thumbRel, cast,
     commentsHtml = `<p class="no-comments">No comments.</p>`;
   }
 
+  const dlName = downloadName(post.text, post.id);
   const videoBlock = videoRel
     ? `<div class="video-wrap">
          <video controls ${thumbRel ? `poster="${escapeHtml(thumbRel)}"` : ''} playsinline>
            <source src="${escapeHtml(videoRel)}" type="video/mp4">
          </video>
+       </div>
+       <div class="video-actions">
+         <a class="download-btn" href="${escapeHtml(videoRel)}" download="${escapeHtml(dlName)}">
+           <span class="dl-icon">⬇</span> Download video
+         </a>
        </div>`
     : `<div class="no-video">Video unavailable (not downloaded).</div>`;
 
